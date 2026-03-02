@@ -399,12 +399,10 @@ class NSWFuelApiClient:
             raise
 
         except Exception as err:
-            # Catch unexpected parsing or logic issues
             msg = f"Unexpected failure getting station prices for {station_code}: {err}"
             _LOGGER.debug(msg)
             raise NSWFuelApiClientError(msg) from err
 
-        # Validate response structure
         if not response or "prices" not in response:
             msg = f"Malformed or empty response for station {station_code}"
             _LOGGER.debug(msg)
@@ -494,7 +492,6 @@ class NSWFuelApiClient:
             _LOGGER.debug(msg)
             raise NSWFuelApiClientError(msg) from err
 
-        # Validate structure
         if not response or "stations" not in response or "prices" not in response:
             msg = f"Malformed or empty response for location ({latitude}, {longitude})"
             _LOGGER.debug(msg)

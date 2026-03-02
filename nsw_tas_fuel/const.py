@@ -1,4 +1,4 @@
-"""Constants for nsw-fuel-api-client."""
+"""Constants for NSW Fuel Check API Client."""
 
 AUTH_URL = "https://api.onegov.nsw.gov.au/oauth/client_credential/accesstoken?grant_type=client_credentials"
 BASE_URL = "https://api.onegov.nsw.gov.au"

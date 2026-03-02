@@ -102,6 +102,7 @@ class StationPrice(NamedTuple):
     price: Price
     station: Station
 
+# v1 data types for price trends, not yet implemented in this version
 
 class Period(Enum):
     """Supported time periods used for pricing variance calculations."""

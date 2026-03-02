@@ -61,7 +61,7 @@ async def main() -> None:
             print("Token is not available.")
 
         # Print results
-        print(f"✅ Prices for station {station_code}:")
+        print(f"Prices for station {station_code}:")
         for price in prices:
             print(
                 f"  {price.fuel_type}: {price.price} c/L "
@@ -70,13 +70,13 @@ async def main() -> None:
 
         # Parameters
         # Sydney
-        longitude = 151.2
-        latitude = -33.86
+        #longitude = 151.2
+        #latitude = -33.86
         # Hobart
-        # longitude = 147.33
-        # latitude = -42.88
+        longitude = 147.33
+        latitude = -42.88
         radius = 25
-        fuel_type = "E10"
+        fuel_type = "P98"
 
         try:
             sp: list[StationPrice] = await client.get_fuel_prices_within_radius(
