@@ -66,7 +66,7 @@ class NSWFuelApiClient:
         self._client_secret = client_secret
         self._token: str | None = None
         self._token_expiry: float = 0
-
+        self._token_lock = asyncio.Lock()
 
     def _format_dt(self, dt: datetime) -> str:
         return dt.strftime("%d/%m/%Y %I:%M:%S %p")
@@ -93,11 +93,26 @@ class NSWFuelApiClient:
         Raises:
             NSWFuelApiClientAuthError: If authentication fails (401).
             NSWFuelApiClientError: For all other token fetch or parse errors.
-
         """
+
+        _LOGGER.debug(
+            "Client instance id=%s token=%s expiry=%s",
+            id(self),
+            "set" if self._token else "None",
+            self._token_expiry,
+        )
         now = time.time()
 
-        if not self._token or now > (self._token_expiry - 60):
+        # No locking needed
+        if self._token and now <= (self._token_expiry - 60):
+            return self._token
+
+        # Avoid multiple simultaneous token refreshes with a lock
+        async with self._token_lock:
+            now = time.time()
+            if self._token and now <= (self._token_expiry - 60):
+                return self._token
+
             _LOGGER.debug("Refreshing NSW Fuel API token")
 
             params = {"grant_type": "client_credentials"}
@@ -112,11 +127,10 @@ class NSWFuelApiClient:
                 async with self._session.get(
                     AUTH_URL,
                     params=params,
-                    headers=headers) as response:
-                    # Raise for non-2xx HTTP status codes
+                    headers=headers,
+                ) as response:
                     response.raise_for_status()
 
-                    # Deserialize JSON response
                     try:
                         if "application/json" in response.content_type:
                             result = await response.json()
@@ -124,21 +138,21 @@ class NSWFuelApiClient:
                             text = await response.text()
                             _LOGGER.warning(
                                 "Expected application/json, got %s",
-                                response.content_type)
+                                response.content_type,
+                            )
                             result = json.loads(text)
+
                     except (json.JSONDecodeError, ValueError) as err:
                         msg = "Failed to parse token response JSON"
-                        _LOGGER.debug("Unexpected eror: %s:", msg)
+                        _LOGGER.debug("Unexpected error: %s", msg)
                         raise NSWFuelApiClientError(msg) from err
-
 
             except ClientResponseError as err:
                 if err.status == HTTP_UNAUTHORIZED:
                     msg = "Invalid NSW Fuel Check API credentials"
-                    # Return specific auth error to applicatioin eg home assisant
-                    # so the user can reenter credenentials
                     _LOGGER.debug(msg)
                     raise NSWFuelApiClientAuthError(msg) from err
+
                 msg = f"Token request failed with status {err.status}: {err.message}"
                 _LOGGER.debug(msg)
                 raise NSWFuelApiClientError(msg) from err
@@ -148,19 +162,19 @@ class NSWFuelApiClient:
                 _LOGGER.debug("%s", msg)
                 raise NSWFuelApiClientError(msg) from err
 
-            # No errors, validate token
+            # All good, validate token
             access_token = result.get("access_token")
             if not access_token:
                 msg = "No access token in NSW Fuel Check token response"
-                _LOGGER.debug("Unexpeted errror: %s", msg)
+                _LOGGER.debug("Unexpected error: %s", msg)
                 raise NSWFuelApiClientError(msg)
 
             expires_in = int(result.get("expires_in", 3600))
+
             self._token = access_token
-            self._token_expiry = now + expires_in
+            self._token_expiry = time.time() + expires_in
 
-        return self._token
-
+            return self._token
 
     async def _async_request(  # noqa: PLR0915
         self,
