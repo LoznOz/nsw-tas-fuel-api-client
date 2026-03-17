@@ -6,7 +6,7 @@ import os
 from datetime import UTC, datetime, timedelta
 
 from aiohttp import ClientSession
-from nsw_fuel.client import (
+from nsw_tas_fuel.client import (
     NSWFuelApiClient,
     StationPrice,
 )
@@ -36,18 +36,27 @@ async def main() -> None:
         _LOGGER.exception("Error loading secrets: %s", exc)
         return
 
+    logging.getLogger('nsw_fuel').setLevel(logging.DEBUG)
+
     async with ClientSession() as session:
         client = NSWFuelApiClient(
             session=session, client_id=api_key, client_secret=api_secret
         )
-        station_code = "18813"
+        station_code_1 = "18813"
+        station_code_2 = "18814"
 
         try:
-            _LOGGER.info("Fetching price data for station %s...", station_code)
+            _LOGGER.info("Fetching price data for station %s...", station_code_1)
             prices = await client.get_fuel_prices_for_station(
-                station_code,
+                station_code_1,
                 state="NSW",
             )
+            _LOGGER.info("Fetching price data for station %s...", station_code_2)
+            prices = await client.get_fuel_prices_for_station(
+                station_code_2,
+                state="NSW",
+            )
+
         except Exception as exc:
             _LOGGER.exception("Failed to fetch station prices: %s", exc)
             return
@@ -61,7 +70,7 @@ async def main() -> None:
             print("Token is not available.")
 
         # Print results
-        print(f"Prices for station {station_code}:")
+        print(f"Prices for station {station_code_1}:")
         for price in prices:
             print(
                 f"  {price.fuel_type}: {price.price} c/L "
@@ -73,10 +82,13 @@ async def main() -> None:
         #longitude = 151.2
         #latitude = -33.86
         # Hobart
-        longitude = 147.33
-        latitude = -42.88
-        radius = 25
-        fuel_type = "P98"
+        #longitude = 147.33
+        #latitude = -42.88
+        # Mogo
+        longitude = 150.1422
+        latitude = -35.7799
+        radius = 55
+        fuel_type = "E10-U91"
 
         try:
             sp: list[StationPrice] = await client.get_fuel_prices_within_radius(
@@ -97,11 +109,12 @@ async def main() -> None:
         except Exception as e:
             _LOGGER.error("Error fetching prices within radius: %s", e)
 
-        _LOGGER.info("Fetching reference data modified since yesterday...")
-
-        modified_since_dt = datetime.now(UTC) - timedelta(days=1)
 
         if False:
+            _LOGGER.info("Fetching reference data modified since yesterday...")
+
+            modified_since_dt = datetime.now(UTC) - timedelta(days=1)
+
             # Call the function
             try:
                 response = await client.get_reference_data(

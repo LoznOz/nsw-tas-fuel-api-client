@@ -95,12 +95,6 @@ class NSWFuelApiClient:
             NSWFuelApiClientError: For all other token fetch or parse errors.
         """
 
-        _LOGGER.debug(
-            "Client instance id=%s token=%s expiry=%s",
-            id(self),
-            "set" if self._token else "None",
-            self._token_expiry,
-        )
         now = time.time()
 
         # No locking needed
