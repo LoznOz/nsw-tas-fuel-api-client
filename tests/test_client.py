@@ -458,7 +458,7 @@ async def test_http_request_accounting(session, mock_token) -> None:
     )
 
     client = NSWFuelApiClient(session=session, client_id="key", client_secret="secret")
-    await client.get_fuel_prices_for_station(station_code, "NSW")
+    await client.get_fuel_prices_for_station(station_code)
 
     assert client.http_request_counts == {"oauth": 1, "data": 1, "retries": 0}
     assert client.http_request_count == 2
@@ -482,8 +482,8 @@ async def test_cached_token_does_not_add_oauth_request(session, mock_token) -> N
     mock_token.get(url, payload=response, repeat=True)
 
     client = NSWFuelApiClient(session=session, client_id="key", client_secret="secret")
-    await client.get_fuel_prices_for_station(station_code, "NSW")
-    await client.get_fuel_prices_for_station(station_code, "NSW")
+    await client.get_fuel_prices_for_station(station_code)
+    await client.get_fuel_prices_for_station(station_code)
 
     assert client.http_request_counts == {"oauth": 1, "data": 2, "retries": 0}
     assert client.http_request_count == 3
@@ -509,7 +509,7 @@ async def test_408_retry_is_accounted(session, mock_token) -> None:
     )
 
     client = NSWFuelApiClient(session=session, client_id="key", client_secret="secret")
-    await client.get_fuel_prices_for_station(station_code, "NSW")
+    await client.get_fuel_prices_for_station(station_code)
 
     assert client.http_request_counts == {"oauth": 1, "data": 2, "retries": 1}
     assert client.http_request_count == 3
@@ -546,7 +546,7 @@ async def test_401_retry_refreshes_token_and_is_accounted(session) -> None:
         client = NSWFuelApiClient(
             session=session, client_id="key", client_secret="secret"
         )
-        await client.get_fuel_prices_for_station(station_code, "NSW")
+        await client.get_fuel_prices_for_station(station_code)
 
     assert client.http_request_counts == {"oauth": 2, "data": 2, "retries": 1}
     assert client.http_request_count == 4
