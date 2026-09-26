@@ -11,6 +11,7 @@ HTTP_UNAUTHORIZED = 401
 NEARBY_ENDPOINT = "/FuelPriceCheck/v2/fuel/prices/nearby"
 PRICE_ENDPOINT = "/FuelPriceCheck/v2/fuel/prices/station/{station_code}"
 PRICES_ENDPOINT = "/FuelPriceCheck/v2/fuel/prices"
+PRICES_NEW_ENDPOINT = "/FuelPriceCheck/v2/fuel/prices/new"
 REF_DATA_REFRESH_DAYS = 30
 REFERENCE_ENDPOINT = "/FuelCheckRefData/v2/fuel/lovs"
 

@@ -29,6 +29,7 @@ from .const import (
     NEARBY_ENDPOINT,
     PRICE_ENDPOINT,
     PRICES_ENDPOINT,
+    PRICES_NEW_ENDPOINT,
     REFERENCE_ENDPOINT,
 )
 from .dto import (
@@ -332,7 +333,10 @@ class NSWFuelApiClient:
         raise NSWFuelApiClientError(msg)
 
 
-    async def get_fuel_prices(self) -> GetFuelPricesResponse:
+    async def get_fuel_prices(
+            self,
+            state: str | None = None,
+    ) -> GetFuelPricesResponse:
         """
         Fetch all fuel prices.
 
@@ -341,13 +345,13 @@ class NSWFuelApiClient:
             NSWFuelApiClientConnectionError: If network or server issues occur.
             NSWFuelApiClientError: For all other API or data validation errors.
 
-        TODO: Accept state as parameter, API defaults to NSW only
-
         """
+        params = {"state": state} if state is not None else None
+
         try:
             response: dict[str, Any] = await self._async_request(
                 path=PRICES_ENDPOINT,
-                params=None,
+                params=params,
             )
 
         except (
@@ -374,6 +378,49 @@ class NSWFuelApiClient:
             raise NSWFuelApiClientError(msg)
 
         return GetFuelPricesResponse.deserialize(response)
+
+    async def get_fuel_prices_new(
+        self,
+        state: str | None = None,
+    ) -> GetFuelPricesResponse:
+        """
+        Fetch all fuel prices since last.
+
+        """
+
+        params = {"state": state} if state is not None else None
+
+        try:
+            response: dict[str, Any] = await self._async_request(
+                path=PRICES_NEW_ENDPOINT,
+                params=params,
+            )
+
+        except (
+            NSWFuelApiClientAuthError,
+            NSWFuelApiClientConnectionError,
+            NSWFuelApiClientError,
+        ):
+            raise
+
+        except Exception as err:
+            msg = "Unexpected error fetching fuel prices:"
+            _LOGGER.debug("%s (%s) - %s", msg, type(err), err)
+            raise NSWFuelApiClientError(msg, err) from err
+
+        if not response:
+            msg = "No data returned from NSW Fuel API"
+            _LOGGER.debug("%s", msg)
+            raise NSWFuelApiClientError(msg)
+
+        # Validate structure
+        if "prices" not in response or "stations" not in response:
+            msg = "Malformed response: missing required fields"
+            _LOGGER.debug("%s", msg)
+            raise NSWFuelApiClientError(msg)
+
+        return GetFuelPricesResponse.deserialize(response)
+
 
 
     async def get_fuel_prices_for_station(
