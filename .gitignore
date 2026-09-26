@@ -66,3 +66,5 @@ token
 .env
 reference-data.json
 .vscode/
+tmp.json
+
