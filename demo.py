@@ -1,4 +1,5 @@
 """Script to explore NSW Fuel Check API."""
+
 import argparse
 import asyncio
 import json
@@ -14,6 +15,7 @@ from nsw_tas_fuel.client import (
 
 logging.basicConfig(level=logging.INFO)
 _LOGGER = logging.getLogger(__name__)
+
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the command-line argument parser."""
@@ -33,24 +35,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Station code to fetch prices for a specific station (e.g., 18813)",
     )
     parser.add_argument(
-         "-state",
-         dest="au_state",
-         metavar="au_state",
-         help="Australian state to fetch prices for (e.g., NSW, TAS)",
+        "-state",
+        dest="au_state",
+        metavar="au_state",
+        help="Australian state to fetch prices for (e.g., NSW, TAS)",
     )
 
     parser.add_argument(
-         "-lat",
-         dest="latitude",
-         metavar="latitude",
-         help="Latitude for location-based price fetching",
+        "-lat",
+        dest="latitude",
+        metavar="latitude",
+        help="Latitude for location-based price fetching",
     )
 
     parser.add_argument(
-         "-lon",
-         dest="longitude",
-         metavar="longitude",
-         help="Longitude for location-based price fetching",
+        "-lon",
+        dest="longitude",
+        metavar="longitude",
+        help="Longitude for location-based price fetching",
     )
 
     parser.add_argument(
@@ -60,7 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=25,
         help="Search radius for location-based price fetching",
-     )
+    )
 
     parser.add_argument(
         "-fuel",
@@ -68,9 +70,10 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="fuel_type",
         default="E10-U91",
         help="Fuel type to fetch prices for (e.g., E10-U91, Diesel)",
-     )
+    )
 
     return parser
+
 
 def parse_args() -> argparse.Namespace:
     """Parse and validate command-line arguments."""
@@ -93,6 +96,7 @@ def parse_args() -> argparse.Namespace:
         )
 
     return args
+
 
 def usage() -> None:
     """Print script usage."""
@@ -140,13 +144,13 @@ def load_secrets(env_file: str = ".env") -> tuple[str, str]:
 
 
 async def main(
-        reference_output_file: str | None = None,
-        station_code: str | None = None,
-        au_state: str | None = "NSW",
-        latitude: float | None = None,
-        longitude: float | None = None,
-        radius: int | None = 25,
-        fuel_type: str | None = "E10-U91"
+    reference_output_file: str | None = None,
+    station_code: str | None = None,
+    au_state: str | None = "NSW",
+    latitude: float | None = None,
+    longitude: float | None = None,
+    radius: int | None = 25,
+    fuel_type: str | None = "E10-U91",
 ) -> None:
     """Get station prices, nearest prices and reference data from NSW Fuel Check API."""
 
@@ -164,7 +168,6 @@ async def main(
         )
 
         if station_code is not None:
-
             try:
                 _LOGGER.info("Fetching price data for station %s...", station_code)
                 prices = await client.get_fuel_prices_for_station(
@@ -175,7 +178,6 @@ async def main(
             except Exception as exc:
                 _LOGGER.info("Failed to fetch station prices: %s", exc)
                 return
-
 
             print(f"Prices for station {station_code}:")
             for price in prices:
@@ -252,7 +254,6 @@ async def main(
             except Exception as e:
                 print(f"Error fetching reference data: {e}")
 
-
             # Write the token to a file so we can use it in the nsw api site to understand the API
             if client._token:  # make sure token exists
                 with open("token", "w") as f:
@@ -260,6 +261,7 @@ async def main(
                 print("Token written to 'token' file.")
             else:
                 print("Token is not available.")
+
 
 if __name__ == "__main__":
     args = parse_args()
