@@ -1,7 +1,6 @@
 """Unit Test NSW Fuel Check API Client."""
 
 import json
-import os
 import re
 from datetime import datetime
 from unittest.mock import AsyncMock
@@ -21,28 +20,63 @@ from nsw_tas_fuel.const import (
     NEARBY_ENDPOINT,
     PRICE_ENDPOINT,
     PRICES_ENDPOINT,
+    PRICES_NEW_ENDPOINT,
     REFERENCE_ENDPOINT,
 )
 
-# Paths to fixture files
-FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
-ALL_PRICES_FILE = os.path.join(FIXTURES_DIR, "all_prices.json")
-LOVS_FILE = os.path.join(FIXTURES_DIR, "lovs.json")
+PRICE_METHODS = [
+    pytest.param(
+        "get_fuel_prices",
+        PRICES_ENDPOINT,
+        id="all",
+    ),
+    pytest.param(
+        "get_fuel_prices_new",
+        PRICES_NEW_ENDPOINT,
+        id="new",
+    ),
+]
+
+STATION_PRICE_CASES = [
+    pytest.param(
+        "1000",
+        None,
+        146.9,
+        150.0,
+        id="nsw",
+    ),
+    pytest.param(
+        "100",
+        "TAS",
+        186.9,
+        180.0,
+        id="tas",
+    ),
+]
+
+
+@pytest.fixture
+def client(session) -> NSWFuelApiClient:
+    """NSWFuelApiClient using default test credentials."""
+    return NSWFuelApiClient(session=session, client_id="key", client_secret="secret")
 
 
 @pytest.mark.asyncio
-async def test_get_fuel_prices(session, mock_token):
-    """Test fetching all fuel prices."""
+@pytest.mark.parametrize("method_name, endpoint", PRICE_METHODS)
+async def test_get_fuel_prices(
+    client,
+    mock_token,
+    all_prices_data,
+    method_name,
+    endpoint,
+) -> None:
+    """Test fetching fuel prices from both all and new endpoints."""
+    url = f"{BASE_URL}{endpoint}"
 
-    url = f"{BASE_URL}{PRICES_ENDPOINT}"
+    mock_token.get(url, payload=all_prices_data)
 
-    with open(ALL_PRICES_FILE) as f:
-        fixture_data = json.load(f)
-
-    mock_token.get(url, payload=fixture_data)
-
-    client = NSWFuelApiClient(session=session, client_id="key", client_secret="secret")
-    response = await client.get_fuel_prices()
+    method = getattr(client, method_name)
+    response = await method()
 
     assert len(response.stations) == 2
     assert len(response.prices) == 5
@@ -59,76 +93,57 @@ async def test_get_fuel_prices(session, mock_token):
 
 
 @pytest.mark.asyncio
-async def test_get_fuel_prices_for_station(session, mock_token) -> None:
-    """Test fetching prices for a single station."""
-    station_code = "1000"
+@pytest.mark.parametrize(
+    "station_code, state, expected_e10_price, expected_p95_price",
+    STATION_PRICE_CASES,
+)
+async def test_get_fuel_prices_for_station(
+    client,
+    mock_token,
+    station_code,
+    state,
+    expected_e10_price,
+    expected_p95_price,
+) -> None:
+    """Test fetching prices for a single station.  Test NSW and TAS."""
     url = f"{BASE_URL}{PRICE_ENDPOINT.format(station_code=station_code)}"
+
+    if state is not None:
+        url += f"?state={state}"
+
     mock_token.get(
         url,
         payload={
             "prices": [
                 {
                     "fueltype": "E10",
-                    "price": 146.9,
+                    "price": expected_e10_price,
                     "lastupdated": "02/06/2018 02:03:04",
                 },
                 {
                     "fueltype": "P95",
-                    "price": 150.0,
+                    "price": expected_p95_price,
                     "lastupdated": "02/06/2018 02:03:04",
                 },
             ]
         },
     )
 
-    client = NSWFuelApiClient(session=session, client_id="key", client_secret="secret")
-    result = await client.get_fuel_prices_for_station(station_code)
+    result = await client.get_fuel_prices_for_station(
+        station_code,
+        state=state,
+    )
 
     assert len(result) == 2
     assert result[0].fuel_type == "E10"
-    assert result[0].price == 146.9
+    assert result[0].price == expected_e10_price
     assert result[0].last_updated == datetime(
         day=2, month=6, year=2018, hour=2, minute=3, second=4
     )
 
 
 @pytest.mark.asyncio
-async def test_get_fuel_prices_for_tas_station(session, mock_token) -> None:
-    """Test fetching prices for a single TAS station."""
-    station_code = "100"
-    state = "TAS"
-    url = f"{BASE_URL}{PRICE_ENDPOINT.format(station_code=station_code)}?state={state}"
-    mock_token.get(
-        url,
-        payload={
-            "prices": [
-                {
-                    "fueltype": "E10",
-                    "price": 186.9,
-                    "lastupdated": "02/06/2018 02:03:04",
-                },
-                {
-                    "fueltype": "P95",
-                    "price": 180.0,
-                    "lastupdated": "02/06/2018 02:03:04",
-                },
-            ]
-        },
-    )
-
-    client = NSWFuelApiClient(session=session, client_id="key", client_secret="secret")
-    result = await client.get_fuel_prices_for_station(station_code, state=state)
-
-    assert len(result) == 2
-    assert result[0].fuel_type == "E10"
-    assert result[0].price == 186.9
-    assert result[0].last_updated == datetime(
-        day=2, month=6, year=2018, hour=2, minute=3, second=4
-    )
-
-
-@pytest.mark.asyncio
-async def test_get_fuel_prices_within_radius(session, mock_token) -> None:
+async def test_get_fuel_prices_within_radius(client, mock_token) -> None:
     """Test fetching prices within radius."""
     url = f"{BASE_URL}{NEARBY_ENDPOINT}"
 
@@ -193,7 +208,6 @@ async def test_get_fuel_prices_within_radius(session, mock_token) -> None:
         },
     )
 
-    client = NSWFuelApiClient(session=session, client_id="key", client_secret="secret")
     result = await client.get_fuel_prices_within_radius(
         latitude=-33.0, longitude=151.0, radius=10, fuel_type="E10"
     )
@@ -206,15 +220,12 @@ async def test_get_fuel_prices_within_radius(session, mock_token) -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_reference_data(session, mock_token) -> None:
+async def test_get_reference_data(client, mock_token, lovs_data) -> None:
     """Test fetching reference data."""
     url = f"{BASE_URL}{REFERENCE_ENDPOINT}"
-    with open(LOVS_FILE) as f:
-        fixture_data = json.load(f)
 
-    mock_token.get(url, payload=fixture_data)
+    mock_token.get(url, payload=lovs_data)
 
-    client = NSWFuelApiClient(session=session, client_id="key", client_secret="secret")
     response = await client.get_reference_data()
 
     assert len(response.brands) == 2
@@ -233,12 +244,11 @@ async def test_get_reference_data(session, mock_token) -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_fuel_prices_server_error(session, mock_token) -> None:
+async def test_get_fuel_prices_server_error(client, mock_token) -> None:
     """Test 500 server error for all fuel prices."""
     url = f"{BASE_URL}{PRICES_ENDPOINT}"
     mock_token.get(url, status=500, body="Internal Server Error")
 
-    client = NSWFuelApiClient(session=session, client_id="key", client_secret="secret")
     with pytest.raises(NSWFuelApiClientConnectionError) as exc:
         await client.get_fuel_prices()
 
@@ -246,7 +256,7 @@ async def test_get_fuel_prices_server_error(session, mock_token) -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_fuel_prices_for_station_client_error(session, mock_token) -> None:
+async def test_get_fuel_prices_for_station_client_error(client, mock_token) -> None:
     """Test 400 client error for a single station."""
     station_code = "21199"
     url = f"{BASE_URL}{PRICE_ENDPOINT.format(station_code=station_code)}"
@@ -263,7 +273,6 @@ async def test_get_fuel_prices_for_station_client_error(session, mock_token) -> 
         },
     )
 
-    client = NSWFuelApiClient(session=session, client_id="key", client_secret="secret")
     with pytest.raises(NSWFuelApiClientError) as exc:
         await client.get_fuel_prices_for_station(station_code)
 
@@ -271,12 +280,11 @@ async def test_get_fuel_prices_for_station_client_error(session, mock_token) -> 
 
 
 @pytest.mark.asyncio
-async def test_get_fuel_prices_within_radius_server_error(session, mock_token) -> None:
+async def test_get_fuel_prices_within_radius_server_error(client, mock_token) -> None:
     """Test 500 server error for nearby fuel prices."""
     url = f"{BASE_URL}{NEARBY_ENDPOINT}"
     mock_token.post(url, status=500, body="Internal Server Error")
 
-    client = NSWFuelApiClient(session=session, client_id="key", client_secret="secret")
     with pytest.raises(NSWFuelApiClientError) as exc:
         await client.get_fuel_prices_within_radius(
             latitude=-33.0, longitude=151.0, radius=10, fuel_type="E10"
@@ -286,7 +294,7 @@ async def test_get_fuel_prices_within_radius_server_error(session, mock_token) -
 
 
 @pytest.mark.asyncio
-async def test_get_reference_data_client_error(session, mock_token) -> None:
+async def test_get_reference_data_client_error(client, mock_token) -> None:
     """Test 400 client error for reference data."""
     url = f"{BASE_URL}{REFERENCE_ENDPOINT}"
     mock_token.get(
@@ -300,7 +308,6 @@ async def test_get_reference_data_client_error(session, mock_token) -> None:
         },
     )
 
-    client = NSWFuelApiClient(session=session, client_id="key", client_secret="secret")
     with pytest.raises(NSWFuelApiClientError) as exc:
         await client.get_reference_data()
 
@@ -308,12 +315,11 @@ async def test_get_reference_data_client_error(session, mock_token) -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_reference_data_server_error(session, mock_token) -> None:
+async def test_get_reference_data_server_error(client, mock_token) -> None:
     """Test 500 server error for reference data."""
     url = f"{BASE_URL}{REFERENCE_ENDPOINT}"
     mock_token.get(url, status=500, body="Internal Server Error.")
 
-    client = NSWFuelApiClient(session=session, client_id="key", client_secret="secret")
     with pytest.raises(NSWFuelApiClientConnectionError) as exc:
         await client.get_reference_data()
 
@@ -321,13 +327,12 @@ async def test_get_reference_data_server_error(session, mock_token) -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_fuel_price_timeout(session, mock_token) -> None:
+async def test_get_fuel_price_timeout(client, mock_token) -> None:
+    """Test timeout error for fetching fuel prices for a single station."""
 
     station_code = "21199"
     url = f"{BASE_URL}{PRICE_ENDPOINT.format(station_code=station_code)}"
     mock_token.get(url, status=408, body="API timeout.")
-
-    client = NSWFuelApiClient(session=session, client_id="key", client_secret="secret")
 
     with pytest.raises(NSWFuelApiClientError) as exc:
         await client.get_fuel_prices_for_station(station_code)
@@ -336,7 +341,9 @@ async def test_get_fuel_price_timeout(session, mock_token) -> None:
 
 
 @pytest.mark.asyncio
-async def test_server_error_raises_connection_error(session, mock_token) -> None:
+async def test_server_error_raises_connection_error(client, mock_token) -> None:
+    """Test that a 500 server error raises NSWFuelApiClientConnectionError."""
+
     url = f"{BASE_URL}{PRICES_ENDPOINT}"
     mock_token.get(
         url,
@@ -344,7 +351,6 @@ async def test_server_error_raises_connection_error(session, mock_token) -> None
         payload={"message": "Server error 500: Internal Server Error"},
     )
 
-    client = NSWFuelApiClient(session=session, client_id="key", client_secret="secret")
     with pytest.raises(NSWFuelApiClientConnectionError):
         await client.get_fuel_prices()
 
@@ -384,9 +390,9 @@ async def test_invalid_client_credentials_token_fetch(session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_async_get_token_invalid_json(session) -> None:
+async def test_async_get_token_invalid_json(client) -> None:
     """Test handling of invalid JSON response during token fetch."""
-    client = NSWFuelApiClient(session=session, client_id="key", client_secret="secret")
+
     client._token = None  # force token refresh
     url = re.compile(rf"^{re.escape(AUTH_URL)}")
 
@@ -407,10 +413,9 @@ async def test_async_get_token_invalid_json(session) -> None:
 
 @pytest.mark.asyncio
 async def test_get_fuel_prices_for_station_empty_response(
-    session, mock_token, monkeypatch
+    client, mock_token, monkeypatch
 ) -> None:
     """Test handling of empty or malformed response for single station prices."""
-    client = NSWFuelApiClient(session=session, client_id="key", client_secret="secret")
 
     # Patch _async_request to return empty dict (missing "prices" key)
     monkeypatch.setattr(client, "_async_request", AsyncMock(return_value={}))
@@ -423,10 +428,9 @@ async def test_get_fuel_prices_for_station_empty_response(
 
 @pytest.mark.asyncio
 async def test_get_fuel_prices_within_radius_missing_keys(
-    session, mock_token, monkeypatch
+    client, mock_token, monkeypatch
 ) -> None:
     """Test handling of missing keys in response for fuel prices within radius."""
-    client = NSWFuelApiClient(session=session, client_id="key", client_secret="secret")
 
     # Make _async_request return "{}" so both keys "stations" and "prices" are missing
     monkeypatch.setattr(client, "_async_request", AsyncMock(return_value={}))

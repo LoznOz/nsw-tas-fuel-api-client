@@ -1,5 +1,7 @@
 """Fixtures for NSW Fuel Check API Client tests."""
 
+import json
+import os
 import re
 import socket
 
@@ -9,6 +11,10 @@ from aioresponses import aioresponses
 from pytest_socket import _true_connect, _true_socket  # the real, unpatched socket bits
 
 from nsw_tas_fuel.const import AUTH_URL
+
+FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
+ALL_PRICES_FILE = os.path.join(FIXTURES_DIR, "all_prices.json")
+LOVS_FILE = os.path.join(FIXTURES_DIR, "lovs.json")
 
 
 @pytest.fixture
@@ -30,6 +36,20 @@ def mock_token():
         # aioresponses supports regex matching for URLs; AUTH_URL might be called with params
         m.get(re.compile(re.escape(AUTH_URL)), payload=token_resp)
         yield m
+
+
+@pytest.fixture
+def all_prices_data() -> dict:
+    """Load the all_prices.json fixture file as parsed JSON."""
+    with open(ALL_PRICES_FILE) as f:
+        return json.load(f)
+
+
+@pytest.fixture
+def lovs_data() -> dict:
+    """Load the lovs.json fixture file as parsed JSON."""
+    with open(LOVS_FILE) as f:
+        return json.load(f)
 
 
 @pytest.fixture(autouse=True)
