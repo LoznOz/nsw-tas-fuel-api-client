@@ -217,7 +217,7 @@ class NSWFuelApiClient:
             Process HTTP errors and determine if retry is needed.
 
             If the Oauth token is invalid (even though expiry checked), try a new one.
-            The NSW Fuel API appears returns 408 when busy, so retry.
+            The NSW Fuel API appears to return 408 when busy, so retry.
 
             Returns:
                 True if caller should retry the request.
@@ -324,12 +324,15 @@ class NSWFuelApiClient:
         msg = "Failed to perform http request"
         raise NSWFuelApiClientError(msg)
 
-    async def get_fuel_prices(
+    async def _get_fuel_prices(
         self,
         state: str | None = None,
+        endpoint: str = PRICES_ENDPOINT,
     ) -> GetFuelPricesResponse:
         """
-        Fetch all fuel prices.
+        Fetch all fuel prices /FuelPriceCheck/v2/fuel/prices
+        OR
+        Fetch all fuel prices /FuelPriceCheck/v2/fuel/prices/new
 
         Raises:
             NSWFuelApiClientAuthError: If authentication fails.
@@ -341,7 +344,7 @@ class NSWFuelApiClient:
 
         try:
             response: dict[str, Any] = await self._async_request(
-                path=PRICES_ENDPOINT,
+                path=endpoint,
                 params=params,
             )
 
@@ -369,48 +372,26 @@ class NSWFuelApiClient:
             raise NSWFuelApiClientError(msg)
 
         return GetFuelPricesResponse.deserialize(response)
+
+    async def get_fuel_prices(
+        self,
+        state: str | None = None,
+    ) -> GetFuelPricesResponse:
+        """Fetch all fuel prices from the API /FuelPriceCheck/v2/fuel/prices."""
+
+        return await self._get_fuel_prices(state, PRICES_ENDPOINT)
 
     async def get_fuel_prices_new(
         self,
         state: str | None = None,
     ) -> GetFuelPricesResponse:
         """
-        Fetch all fuel prices since last.
+        Fetch fuel prices from /FuelPriceCheck/v2/fuel/pricess/new
+        which returns all prices since last API call to /prices or /prices/new.
 
         """
 
-        params = {"state": state} if state is not None else None
-
-        try:
-            response: dict[str, Any] = await self._async_request(
-                path=PRICES_NEW_ENDPOINT,
-                params=params,
-            )
-
-        except (
-            NSWFuelApiClientAuthError,
-            NSWFuelApiClientConnectionError,
-            NSWFuelApiClientError,
-        ):
-            raise
-
-        except Exception as err:
-            msg = "Unexpected error fetching fuel prices:"
-            _LOGGER.debug("%s (%s) - %s", msg, type(err), err)
-            raise NSWFuelApiClientError(msg, err) from err
-
-        if not response:
-            msg = "No data returned from NSW Fuel API"
-            _LOGGER.debug("%s", msg)
-            raise NSWFuelApiClientError(msg)
-
-        # Validate structure
-        if "prices" not in response or "stations" not in response:
-            msg = "Malformed response: missing required fields"
-            _LOGGER.debug("%s", msg)
-            raise NSWFuelApiClientError(msg)
-
-        return GetFuelPricesResponse.deserialize(response)
+        return await self._get_fuel_prices(state, PRICES_NEW_ENDPOINT)
 
     async def get_fuel_prices_for_station(
         self,
@@ -497,7 +478,7 @@ class NSWFuelApiClient:
             NSWFuelApiClientError: For all other API or data validation errors.
 
         """
-        
+
         try:
             payload: dict[str, Any] = {
                 "fueltype": fuel_type,
