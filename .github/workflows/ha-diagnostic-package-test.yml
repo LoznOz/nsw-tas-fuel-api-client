@@ -1,0 +1,73 @@
+name: HA diagnostic package validation
+
+on:
+  push:
+    branches:
+      - test/http-request-accounting-ha
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out exact diagnostic client revision
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Upgrade packaging tools
+        run: python -m pip install --upgrade pip setuptools wheel build
+
+      - name: Build wheel and source distribution
+        run: python -m build
+
+      - name: Install built wheel
+        shell: bash
+        run: |
+          python -m pip install dist/*.whl
+
+      - name: Verify installed distribution and diagnostic API
+        run: |
+          python - <<'PY'
+          from importlib.metadata import version
+          import nsw_tas_fuel
+          from nsw_tas_fuel import NSWFuelApiClient
+
+          installed = version("nsw-tas-fuel-api-client")
+          print("distribution version:", installed)
+          print("package:", nsw_tas_fuel.__file__)
+          assert installed == "0.0.1+diag1", installed
+
+          client = NSWFuelApiClient("test-client-id", "test-client-secret")
+          counts = client.http_request_counts
+          print("initial http_request_counts:", counts)
+          assert isinstance(counts, dict)
+          for key in ("oauth_requests", "data_requests", "retries", "total_requests"):
+              assert key in counts, (key, counts)
+          PY
+
+      - name: Install test dependencies
+        run: python -m pip install pytest pytest-asyncio aioresponses
+
+      - name: Run request-accounting tests
+        run: python -m pytest -q tests/test_request_accounting.py
+
+      - name: Verify exact GitHub archive install in clean virtual environment
+        shell: bash
+        run: |
+          python -m venv /tmp/diag-venv
+          /tmp/diag-venv/bin/python -m pip install --upgrade pip
+          /tmp/diag-venv/bin/python -m pip install "nsw-tas-fuel-api-client @ https://github.com/LoznOz/nsw-tas-fuel-api-client/archive/${GITHUB_SHA}.zip"
+          /tmp/diag-venv/bin/python - <<'PY'
+          from importlib.metadata import version
+          from nsw_tas_fuel import NSWFuelApiClient
+
+          installed = version("nsw-tas-fuel-api-client")
+          print("archive-installed version:", installed)
+          assert installed == "0.0.1+diag1", installed
+          client = NSWFuelApiClient("test-client-id", "test-client-secret")
+          print("archive http_request_counts:", client.http_request_counts)
+          PY
