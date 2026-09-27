@@ -65,6 +65,7 @@ secrets
 token
 .env
 reference-data.json
+reference.json
 .vscode/
 tmp.json
 
