@@ -14,4 +14,3 @@ PRICES_ENDPOINT = "/FuelPriceCheck/v2/fuel/prices"
 PRICES_NEW_ENDPOINT = "/FuelPriceCheck/v2/fuel/prices/new"
 REF_DATA_REFRESH_DAYS = 30
 REFERENCE_ENDPOINT = "/FuelCheckRefData/v2/fuel/lovs"
-

@@ -1,4 +1,5 @@
 """Unit Test NSW Fuel Check API Client."""
+
 import json
 import os
 import re
@@ -7,6 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from aioresponses import aioresponses
+
 from nsw_tas_fuel.client import (
     NSWFuelApiClient,
     NSWFuelApiClientAuthError,
@@ -88,6 +90,7 @@ async def test_get_fuel_prices_for_station(session, mock_token) -> None:
     assert result[0].last_updated == datetime(
         day=2, month=6, year=2018, hour=2, minute=3, second=4
     )
+
 
 @pytest.mark.asyncio
 async def test_get_fuel_prices_for_tas_station(session, mock_token) -> None:
@@ -345,6 +348,7 @@ async def test_server_error_raises_connection_error(session, mock_token) -> None
     with pytest.raises(NSWFuelApiClientConnectionError):
         await client.get_fuel_prices()
 
+
 @pytest.mark.asyncio
 async def test_invalid_client_credentials_token_fetch(session) -> None:
     """
@@ -415,6 +419,7 @@ async def test_get_fuel_prices_for_station_empty_response(
         await client.get_fuel_prices_for_station("12345")
 
     assert "malformed or empty" in str(exc.value).lower()
+
 
 @pytest.mark.asyncio
 async def test_get_fuel_prices_within_radius_missing_keys(
