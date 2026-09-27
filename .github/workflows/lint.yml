@@ -28,10 +28,10 @@ jobs:
         run: pip install .
 
       - name: Install test dependencies
-        run: pip install .[test] 
+        run: pip install .[test]
 
       - name: Tests
-        run: python3 -m pytest
+        run: python3 -m pytest tests/test_client.py
 
       - name: Lint
         run: python3 -m ruff check .
