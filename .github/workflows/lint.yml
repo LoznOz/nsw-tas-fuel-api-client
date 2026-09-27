@@ -24,8 +24,11 @@ jobs:
           python-version: "3.14"
           cache: "pip"
 
-      - name: Install requirements
-        run: python3 -m pip install -r requirements.txt
+      - name: Install core dependencies
+        run: pip install .
+
+      - name: Install test dependencies
+        run: pip install .[test] 
 
       - name: Tests
         run: python3 -m pytest
