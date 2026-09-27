@@ -1,21 +1,25 @@
-""" Integration tests for the NSWFuelApiClient using the real API."""
+"""Integration tests for the NSWFuelApiClient using the real API."""
 
 import os
 from datetime import datetime
 
 import pytest
 from dotenv import load_dotenv
+
 from nsw_tas_fuel.client import (
     NSWFuelApiClient,
     NSWFuelApiClientAuthError,
-    NSWFuelApiClientError
+    NSWFuelApiClientError,
 )
+
+pytestmark = pytest.mark.enable_socket
 
 
 @pytest.fixture
 async def session():
     """Provide a fresh aiohttp ClientSession for each test."""
     import aiohttp
+
     async with aiohttp.ClientSession() as sess:
         yield sess
 
@@ -25,7 +29,11 @@ def client(session):
     """Return a NSWFuelApiClient instance for integration tests."""
     # Load client_id and client_secret from .env file
     load_dotenv()
-    return NSWFuelApiClient(session=session, client_id=os.environ["NSWFUELCHECKAPI_KEY"], client_secret=os.environ["NSWFUELCHECKAPI_SECRET"])
+    return NSWFuelApiClient(
+        session=session,
+        client_id=os.environ["NSWFUELCHECKAPI_KEY"],
+        client_secret=os.environ["NSWFUELCHECKAPI_SECRET"],
+    )
 
 
 @pytest.mark.integration
@@ -120,9 +128,12 @@ async def test_get_fuel_prices_within_radius_tas(client):
 @pytest.mark.asyncio
 async def test_authentication_failure(session):
     """Integration test to confirm auth failure raises correct exception."""
-    client = NSWFuelApiClient(session=session, client_id="invalid", client_secret="wrong")
+    client = NSWFuelApiClient(
+        session=session, client_id="invalid", client_secret="wrong"
+    )
     with pytest.raises(NSWFuelApiClientAuthError):
         await client._async_get_token()
+
 
 @pytest.mark.integration
 @pytest.mark.asyncio
