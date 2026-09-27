@@ -45,17 +45,6 @@ def usage() -> None:
     build_parser().print_help()
 
 
-def parse_args() -> tuple[str | None, bool, bool]:
-    """Parse command-line arguments.
-
-    Returns:
-        A tuple of (output_file, new_prices_only, print_summary).
-
-    """
-    args = build_parser().parse_args()
-    return args.output_file, args.new_prices_only, args.print_summary
-
-
 def load_secrets(env_file: str = ".env") -> tuple[str, str]:
     """Get Fuel Check API key and secret from a .env file.
 
@@ -192,5 +181,5 @@ async def main(
 
 
 if __name__ == "__main__":
-    out_file, new_prices, summary = parse_args()
-    asyncio.run(main(out_file, new_prices, summary))
+    args = build_parser().parse_args()
+    asyncio.run(main(args.output_file, args.new_prices_only, args.print_summary))
