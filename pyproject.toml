@@ -4,7 +4,7 @@
 
     [project]
     name = "nsw-tas-fuel-api-client"
-    version = "0.0.1"
+    version = "0.0.2"
     readme = "README.md"
     description = "Client library for NSW Fuel API"
     authors = [
@@ -12,9 +12,9 @@
         { name = "Nick Whyte", email = "nick@nickwhyte.com" },
     ]
     license = { text = "MIT" }
-    requires-python = ">=3.12"
+    requires-python = ">=3.14"
     dependencies = [
-        "aiohttp>=3.9",
+        "aiohttp<3.14",
     ]
 
     classifiers = [
@@ -57,3 +57,22 @@
 
     [tool.pylint.design]
     max-args = 6
+
+[tool.ruff]
+target-version = "py314"
+
+[tool.ruff.lint.per-file-ignores]
+"getprices.py" = [
+    "ASYNC230",
+    "BLE001",
+]
+"demo.py" = [
+    "ASYNC230",
+    "BLE001",
+]
+
+"tests/*.py" = [
+    "ASYNC230",
+    "BLE001",
+    "DTZ001"
+]
