@@ -42,6 +42,7 @@ jobs:
               installed = version("nsw-tas-fuel-api-client")
               print("distribution version:", installed)
               print("package:", nsw_tas_fuel.__file__)
+              print("aiohttp version for package validation:", aiohttp.__version__)
               assert installed == "0.0.1+diag1", installed
 
               async with aiohttp.ClientSession() as session:
@@ -55,8 +56,22 @@ jobs:
           asyncio.run(main())
           PY
 
-      - name: Install test dependencies
-        run: python -m pip install pytest pytest-asyncio aioresponses
+      # aioresponses 0.7.9 is not compatible with aiohttp 3.14.x: it constructs
+      # ClientResponse without the newer stream_writer argument. Keep the package
+      # validation above on current aiohttp, but run the mocked accounting tests
+      # with the newest pre-3.14 aiohttp line so the mock layer can operate.
+      - name: Install test dependencies with aioresponses-compatible aiohttp
+        run: python -m pip install pytest pytest-asyncio aioresponses==0.7.9 'aiohttp<3.14'
+
+      - name: Show accounting-test dependency versions
+        run: |
+          python - <<'PY'
+          import aiohttp
+          import aioresponses
+          from importlib.metadata import version
+          print("aiohttp:", aiohttp.__version__)
+          print("aioresponses:", version("aioresponses"))
+          PY
 
       - name: Run request-accounting tests
         run: |
@@ -78,6 +93,7 @@ jobs:
           async def main():
               installed = version("nsw-tas-fuel-api-client")
               print("archive-installed version:", installed)
+              print("archive aiohttp version:", aiohttp.__version__)
               assert installed == "0.0.1+diag1", installed
 
               async with aiohttp.ClientSession() as session:
