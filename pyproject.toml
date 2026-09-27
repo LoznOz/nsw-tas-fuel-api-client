@@ -4,7 +4,7 @@
 
     [project]
     name = "nsw-tas-fuel-api-client"
-    version = "0.0.1"
+    version = "0.0.1+diag1"
     readme = "README.md"
     description = "Client library for NSW Fuel API"
     authors = [
