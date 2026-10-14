@@ -30,11 +30,12 @@
     test = [
         "pytest",
         "pytest-asyncio",
+        "pytest-socket",
         "pytest-cov",
         "requests-mock",
         "aioresponses",
         "dotenv",
-        "ruff",
+        "ruff==0.16.9",
         "twine",
     ]
 
