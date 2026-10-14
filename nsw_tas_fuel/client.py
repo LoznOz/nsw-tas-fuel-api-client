@@ -8,6 +8,8 @@ import json
 import logging
 import time
 import uuid
+from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime
 from functools import wraps
 from http import HTTPStatus
@@ -35,6 +37,13 @@ from .const import (
     PRICES_NEW_ENDPOINT,
     REFERENCE_ENDPOINT,
 )
+from .diagnostics import (
+    HTTPAttemptEvidence,
+    OperationEvidence,
+    OperationState,
+    current_operation,
+    parse_retry_after,
+)
 from .dto import (
     GetFuelPricesResponse,
     GetReferenceDataResponse,
@@ -51,6 +60,14 @@ class NSWFuelApiClientError(Exception):
     """Base class for all NSW Fuel API errors."""
 
 
+class NSWFuelApiClientRateLimitError(NSWFuelApiClientError):
+    """HTTP 429 with normalized guidance; no automatic retry policy."""
+
+    def __init__(self, retry_after_seconds: float | None) -> None:
+        super().__init__("FuelCheck rate limited (HTTP 429)")
+        self.retry_after_seconds = retry_after_seconds
+
+
 class NSWFuelApiClientAuthError(NSWFuelApiClientError):
     """Authentication failure (invalid or expired credentials)."""
 
@@ -64,12 +81,51 @@ def _detach_error_chain(operation):
 
     @wraps(operation)
     async def guarded(*args, **kwargs):
+        client = args[0]
+        state = current_operation.get()
+        owns = (
+            state is None
+            or state.client is not client
+            or state.task is not asyncio.current_task()
+        )
+        if owns:
+            state = OperationState(client, asyncio.current_task(), operation.__name__)
+            reset = current_operation.set(state)
+        escaping_error: BaseException | None = None
+        outcome = "success"
         try:
             return await operation(*args, **kwargs)
         except NSWFuelApiClientError as err:
+            escaping_error = err
+            outcome = "failure"
             err.__cause__ = None
             err.__context__ = None
             raise
+        except asyncio.CancelledError as err:
+            escaping_error = err
+            outcome = "cancelled"
+            raise
+        except Exception:  # noqa: BLE001 - sanitize DTO/parse failures at the boundary
+            escaping_error = NSWFuelApiClientError("FuelCheck acquisition failed")
+            outcome = "failure"
+            raise escaping_error from None
+        except BaseException as err:
+            escaping_error = err
+            outcome = "failure"
+            raise
+        finally:
+            if owns:
+                try:
+                    state.outcome = outcome
+                    evidence = state.freeze()
+                    if escaping_error is not None:
+                        escaping_error.operation_evidence = evidence
+                        if isinstance(escaping_error, NSWFuelApiClientError):
+                            escaping_error.__cause__ = None
+                            escaping_error.__context__ = None
+                finally:
+                    current_operation.reset(reset)
+                client._publish_operation(evidence)
 
     return guarded
 
@@ -93,9 +149,15 @@ class NSWFuelApiClient:
     """Main API client for NSW FuelCheck."""
 
     def __init__(
-        self, session: ClientSession, client_id: str, client_secret: str
+        self,
+        session: ClientSession,
+        client_id: str,
+        client_secret: str,
+        *,
+        operation_observer: Callable[[OperationEvidence], None] | None = None,
     ) -> None:
         """Initialize with aiohttp session and client credentials."""
+        self._operation_observer = operation_observer
         self._session = session
         self._client_id = client_id
         self._client_secret = client_secret
@@ -108,6 +170,32 @@ class NSWFuelApiClient:
             "retries": 0,
         }
         self._last_token_expires_in: int | None = None
+
+    def _publish_operation(self, evidence: OperationEvidence) -> None:
+        if self._operation_observer is not None:
+            try:
+                self._operation_observer(evidence)
+            except Exception, asyncio.CancelledError:  # noqa: BLE001 - isolate synchronous observers
+                _LOGGER.debug("FuelCheck operation observer failed")
+
+    def _dispatch(self, kind: str, *, retry: bool = False) -> None:
+        self._http_request_counts[kind] += 1
+        state = current_operation.get()
+        setattr(state, kind, getattr(state, kind) + 1)
+        state.attempts.append(HTTPAttemptEvidence(kind, retry))
+        if retry:
+            self._http_request_counts["retries"] += 1
+            state.retries += 1
+
+    def _response_evidence(self, response: ClientResponse) -> None:
+        state = current_operation.get()
+        state.attempts[-1] = replace(state.attempts[-1], http_status=response.status)
+        state.http_status = response.status
+        if response.status == 429:
+            state.rate_limited = True
+            state.retry_after_seconds = parse_retry_after(
+                response.headers.get("Retry-After")
+            )
 
     def _format_dt(self, dt: datetime) -> str:
         return dt.strftime("%d/%m/%Y %I:%M:%S %p")
@@ -141,10 +229,13 @@ class NSWFuelApiClient:
         if self._token and now <= (self._token_expiry - 60):
             return self._token
 
+        waited = self._token_lock.locked()
         # Avoid multiple simultaneous token refreshes with a lock
         async with self._token_lock:
             now = time.time()
             if self._token and now <= (self._token_expiry - 60):
+                if waited:
+                    current_operation.get().shared_oauth_reuses += 1
                 return self._token
 
             _LOGGER.debug("Refreshing NSW Fuel API token")
@@ -158,12 +249,17 @@ class NSWFuelApiClient:
             }
 
             try:
-                self._http_request_counts["oauth"] += 1
+                self._dispatch("oauth")
                 async with self._session.get(
                     AUTH_URL,
                     params=params,
                     headers=headers,
                 ) as response:
+                    self._response_evidence(response)
+                    if response.status == 429:
+                        raise NSWFuelApiClientRateLimitError(
+                            current_operation.get().retry_after_seconds
+                        )
                     response.raise_for_status()
 
                     try:
@@ -287,7 +383,8 @@ class NSWFuelApiClient:
             if status == HTTP_UNAUTHORIZED:
                 if attempt < max_retries:
                     # Clear token to force refresh and retry
-                    self._token = None
+                    if self._token == token:
+                        self._token = None
                     return True
                 msg = "Authentication failed during request."
                 _LOGGER.debug("%s", msg)
@@ -340,9 +437,7 @@ class NSWFuelApiClient:
             url = f"{BASE_URL}{path}"
 
             try:
-                self._http_request_counts["data"] += 1
-                if attempt > 0:
-                    self._http_request_counts["retries"] += 1
+                self._dispatch("data", retry=attempt > 0)
                 async with self._session.request(
                     method.upper(),
                     url,
@@ -351,7 +446,12 @@ class NSWFuelApiClient:
                     json=json_body,
                     timeout=ClientTimeout(total=DEFAULT_TIMEOUT),
                 ) as response:
+                    self._response_evidence(response)
                     status = response.status
+                    if status == 429:
+                        raise NSWFuelApiClientRateLimitError(
+                            current_operation.get().retry_after_seconds
+                        )
                     data = await _parse_response(response)
 
                     should_retry = await _handle_http_error(
