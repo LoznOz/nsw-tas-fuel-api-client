@@ -9,6 +9,8 @@ import logging
 import time
 import uuid
 from datetime import UTC, datetime
+from functools import wraps
+from http import HTTPStatus
 from typing import Any
 
 from aiohttp import (
@@ -42,6 +44,7 @@ from .dto import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+_TRUSTED_DATETIME_ERROR = "String was not recognized as a valid DateTime."
 
 
 class NSWFuelApiClientError(Exception):
@@ -54,6 +57,36 @@ class NSWFuelApiClientAuthError(NSWFuelApiClientError):
 
 class NSWFuelApiClientConnectionError(NSWFuelApiClientError):
     """Connection or server availability issue."""
+
+
+def _detach_error_chain(operation):
+    """Drop retained transport exceptions at the client error boundary."""
+
+    @wraps(operation)
+    async def guarded(*args, **kwargs):
+        try:
+            return await operation(*args, **kwargs)
+        except NSWFuelApiClientError as err:
+            err.__cause__ = None
+            err.__context__ = None
+            raise
+
+    return guarded
+
+
+def _trusted_provider_message(data: Any) -> str | None:
+    """Return a local literal only; arbitrary provider text is never returned."""
+    if type(data) is not dict:
+        return None
+    details = data.get("errorDetails")
+    if type(details) is list and details:
+        details = details[0]
+    if type(details) is not dict:
+        return None
+    value = details.get("description") or details.get("message")
+    if type(value) is str and value == _TRUSTED_DATETIME_ERROR:
+        return _TRUSTED_DATETIME_ERROR
+    return None
 
 
 class NSWFuelApiClient:
@@ -92,6 +125,7 @@ class NSWFuelApiClient:
             return ed.get("description") or ed.get("message")
         return None
 
+    @_detach_error_chain
     async def _async_get_token(self) -> str | None:
         """
         Get or refresh OAuth2 token from the NSW Fuel Check API.
@@ -137,40 +171,45 @@ class NSWFuelApiClient:
                             result = await response.json()
                         else:
                             text = await response.text()
-                            _LOGGER.warning(
-                                "Expected application/json, got %s",
-                                response.content_type,
-                            )
+                            _LOGGER.warning("Token response is not application/json")
                             result = json.loads(text)
 
-                    except (json.JSONDecodeError, ValueError) as err:
+                    except json.JSONDecodeError, ValueError:
                         msg = "Failed to parse token response JSON"
                         _LOGGER.debug("Unexpected error: %s", msg)
-                        raise NSWFuelApiClientError(msg) from err
+                        raise NSWFuelApiClientError(msg) from None
 
             except ClientResponseError as err:
                 if err.status == HTTP_UNAUTHORIZED:
                     msg = "Invalid NSW Fuel Check API credentials"
                     _LOGGER.debug(msg)
-                    raise NSWFuelApiClientAuthError(msg) from err
+                    raise NSWFuelApiClientAuthError(msg) from None
 
-                msg = f"Token request failed with status {err.status}: {err.message}"
+                msg = f"Token request failed with status {err.status}"
                 _LOGGER.debug(msg)
-                raise NSWFuelApiClientError(msg) from err
+                raise NSWFuelApiClientError(msg) from None
 
-            except Exception as err:
-                msg = f"Unexpected error fetching token: {err}"
+            except NSWFuelApiClientError:
+                raise
+
+            except Exception:  # noqa: BLE001 - isolate observers or classify acquisition failure
+                msg = "Unexpected error fetching token"
                 _LOGGER.debug("%s", msg)
-                raise NSWFuelApiClientError(msg) from err
+                raise NSWFuelApiClientError(msg) from None
 
             # All good, validate token
+            if not isinstance(result, dict):
+                raise NSWFuelApiClientError("Malformed token response")
             access_token = result.get("access_token")
             if not access_token:
                 msg = "No access token in NSW Fuel Check token response"
                 _LOGGER.debug("Unexpected error: %s", msg)
                 raise NSWFuelApiClientError(msg)
 
-            expires_in = int(result.get("expires_in", 3600))
+            try:
+                expires_in = int(result.get("expires_in", 3600))
+            except TypeError, ValueError, OverflowError:
+                raise NSWFuelApiClientError("Invalid token expiry value") from None
             self._last_token_expires_in = expires_in
             _LOGGER.debug(
                 "NSW Fuel API OAuth token obtained: expires_in=%d seconds; "
@@ -187,6 +226,7 @@ class NSWFuelApiClient:
 
             return self._token
 
+    @_detach_error_chain
     async def _async_request(
         self,
         path: str,
@@ -241,7 +281,8 @@ class NSWFuelApiClient:
                 Raises appropriate exceptions otherwise.
 
             """
-            details = self._extract_error_details(data)
+            # Provider bodies/reason phrases can echo credentials. Only locally
+            # defined categories and HTTP status are safe diagnostic evidence.
 
             if status == HTTP_UNAUTHORIZED:
                 if attempt < max_retries:
@@ -249,29 +290,39 @@ class NSWFuelApiClient:
                     self._token = None
                     return True
                 msg = "Authentication failed during request."
-                _LOGGER.debug("HTTP error: %s", details)
-                raise NSWFuelApiClientAuthError(details or msg)
+                _LOGGER.debug("%s", msg)
+                raise NSWFuelApiClientAuthError(msg)
 
             if status == HTTP_TIMEOUT_ERROR:
                 if attempt < max_retries:
                     return True
                 msg = "Request timed out after retry."
-                _LOGGER.debug("HTTP error: %s", details)
-                raise NSWFuelApiClientConnectionError(details or msg)
+                _LOGGER.debug("%s", msg)
+                raise NSWFuelApiClientConnectionError(msg)
 
             # Server errors (5xx)
             if status >= HTTP_INTERNAL_SERVER_ERROR:
-                _LOGGER.debug("Server error: (%s): %s", status, response.reason)
-                raise NSWFuelApiClientConnectionError(
-                    details or f"Server error {status}: {response.reason}"
+                phrase = (
+                    HTTPStatus(status).phrase
+                    if status in HTTPStatus
+                    else "Unknown status"
                 )
+                msg = f"Server error {status}: {phrase}"
+                _LOGGER.debug("%s", msg)
+                raise NSWFuelApiClientConnectionError(msg)
 
             # Client errors (4xx but not handled above)
             if status >= HTTP_CLIENT_SERVER_ERROR:
-                _LOGGER.debug("HTTP error: (%s): %s", status, response.reason)
-                raise NSWFuelApiClientError(
-                    details or f"HTTP error {status}: {response.reason}"
+                phrase = (
+                    HTTPStatus(status).phrase
+                    if status in HTTPStatus
+                    else "Unknown status"
                 )
+                msg = (
+                    _trusted_provider_message(data) if status == 400 else None
+                ) or f"HTTP error {status}: {phrase}"
+                _LOGGER.debug("%s", msg)
+                raise NSWFuelApiClientError(msg)
 
             # If status is 2xx or 3xx, no error: no retry needed
             return False
@@ -318,27 +369,16 @@ class NSWFuelApiClient:
                 NSWFuelApiClientAuthError,
                 NSWFuelApiClientConnectionError,
                 NSWFuelApiClientError,
-            ) as err:
-                # Preserve specific error types and messages
-                _LOGGER.debug(
-                    "API error from NSW Fuel Check API url=%s params=%s error=%s",
-                    url,
-                    params,
-                    err,
-                    exc_info=True,
-                )
+            ):
+                # Preserve failure types without logging request data/tracebacks.
+                _LOGGER.debug("FuelCheck API request failed")
                 raise
 
-            except Exception as err:
+            except Exception:  # noqa: BLE001 - isolate observers or classify acquisition failure
                 # Wrap any other unexpected exceptions in a generic API error
-                _LOGGER.debug(
-                    "Unexpeced error from NSW Fuel Check API url=%s params=%s error=%s",
-                    url,
-                    params,
-                    err,
-                    exc_info=True,
-                )
-                raise NSWFuelApiClientError(str(err)) from err
+                msg = "FuelCheck transport request failed"
+                _LOGGER.debug("%s", msg)
+                raise NSWFuelApiClientError(msg) from None
 
         # Just in case we exit loop without returning or raising
         msg = "Failed to perform http request"
@@ -359,6 +399,7 @@ class NSWFuelApiClient:
         """Return expires_in from the most recently obtained OAuth token."""
         return self._last_token_expires_in
 
+    @_detach_error_chain
     async def _get_fuel_prices(
         self,
         state: str | None = None,
@@ -390,10 +431,10 @@ class NSWFuelApiClient:
         ):
             raise
 
-        except Exception as err:
+        except Exception:  # noqa: BLE001 - isolate observers or classify acquisition failure
             msg = "Unexpected error fetching fuel prices:"
-            _LOGGER.debug("%s (%s) - %s", msg, type(err), err)
-            raise NSWFuelApiClientError(msg, err) from err
+            _LOGGER.debug("%s", msg)
+            raise NSWFuelApiClientError(msg) from None
 
         if not response:
             msg = "No data returned from NSW Fuel API"
@@ -408,6 +449,7 @@ class NSWFuelApiClient:
 
         return GetFuelPricesResponse.deserialize(response)
 
+    @_detach_error_chain
     async def get_fuel_prices(
         self,
         state: str | None = None,
@@ -416,6 +458,7 @@ class NSWFuelApiClient:
 
         return await self._get_fuel_prices(state, PRICES_ENDPOINT)
 
+    @_detach_error_chain
     async def get_fuel_prices_new(
         self,
         state: str | None = None,
@@ -428,6 +471,7 @@ class NSWFuelApiClient:
 
         return await self._get_fuel_prices(state, PRICES_NEW_ENDPOINT)
 
+    @_detach_error_chain
     async def get_fuel_prices_for_station(
         self,
         station_code: str,
@@ -458,30 +502,30 @@ class NSWFuelApiClient:
             # Application, e.g. HA, needs to handle reauth, retry, other errors
             raise
 
-        except Exception as err:
-            msg = f"Unexpected failure getting station prices for {station_code}: {err}"
+        except Exception:  # noqa: BLE001 - isolate observers or classify acquisition failure
+            msg = "Unexpected failure getting station prices"
             _LOGGER.debug(msg)
-            raise NSWFuelApiClientError(msg) from err
+            raise NSWFuelApiClientError(msg) from None
 
         if not response or "prices" not in response:
-            msg = f"Malformed or empty response for station {station_code}"
+            msg = "Malformed or empty response for station prices"
             _LOGGER.debug(msg)
             raise NSWFuelApiClientError(msg)
 
         prices_data = response.get("prices")
         if not prices_data:
-            msg = f"No price data found for station {station_code}"
+            msg = "No price data found for station"
             _LOGGER.debug(msg)
             raise NSWFuelApiClientError(msg)
 
         _LOGGER.debug(
-            "get_fuel_prices_for_station fetched %d prices for station %s",
+            "get_fuel_prices_for_station fetched %d prices",
             len(prices_data),
-            station_code,
         )
 
         return [Price.deserialize(p) for p in prices_data]
 
+    @_detach_error_chain
     async def get_fuel_prices_within_radius(
         self,
         latitude: float,
@@ -526,7 +570,7 @@ class NSWFuelApiClient:
                 "sortascending": str(sort_ascending).lower(),
             }
 
-            _LOGGER.debug("get_fuel_prices_within_radius payload=%s", payload)
+            _LOGGER.debug("Requesting nearby FuelCheck prices")
 
             response: dict[str, Any] = await self._async_request(
                 path=NEARBY_ENDPOINT,
@@ -544,23 +588,20 @@ class NSWFuelApiClient:
             # Application, e.g. HA, needs to handle reauth, retry, other errors
             raise
 
-        except Exception as err:
-            msg = (
-                f"Unexpected error fetching nearby prices for "
-                f"({latitude}, {longitude}): {err}"
-            )
+        except Exception:  # noqa: BLE001 - isolate observers or classify acquisition failure
+            msg = "Unexpected error fetching nearby prices"
             _LOGGER.debug(msg)
-            raise NSWFuelApiClientError(msg) from err
+            raise NSWFuelApiClientError(msg) from None
 
         if not response or "stations" not in response or "prices" not in response:
-            msg = f"Malformed or empty response for location ({latitude}, {longitude})"
+            msg = "Malformed or empty response for nearby location"
             _LOGGER.debug(msg)
             raise NSWFuelApiClientError(msg)
 
         stations_data = response.get("stations")
         prices_data = response.get("prices")
         if not stations_data or not prices_data:
-            msg = f"No stations/prices found for location ({latitude}, {longitude})"
+            msg = "No stations/prices found for nearby location"
             _LOGGER.warning(msg)
             raise NSWFuelApiClientError(msg)
 
@@ -580,22 +621,18 @@ class NSWFuelApiClient:
                         station_prices.append(
                             StationPrice(price=price, station=station)
                         )
-            except (KeyError, TypeError, ValueError) as parse_err:
-                _LOGGER.debug("Skipping malformed price entry: %s", parse_err)
+            except KeyError, TypeError, ValueError:
+                _LOGGER.debug("Skipping malformed price entry")
 
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            station_names = ", ".join(sp.station.name for sp in station_prices)
             _LOGGER.debug(
-                "get_fuel_prices_within_radius returned %d nearby station prices for"
-                " lat=%s lon=%s: %s",
+                "get_fuel_prices_within_radius returned %d nearby station prices",
                 len(station_prices),
-                latitude,
-                longitude,
-                station_names,
             )
 
         return station_prices
 
+    @_detach_error_chain
     async def get_reference_data(
         self,
         modified_since: datetime | None = None,
@@ -640,9 +677,9 @@ class NSWFuelApiClient:
         ):
             raise
 
-        except Exception as err:
-            msg = f"Unexpected failure fetching reference data: {err}"
-            raise NSWFuelApiClientError(msg) from err
+        except Exception:  # noqa: BLE001 - isolate observers or classify acquisition failure
+            msg = "Unexpected failure fetching reference data"
+            raise NSWFuelApiClientError(msg) from None
 
         if not response:
             msg = "Empty response from reference data endpoint"

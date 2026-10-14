@@ -276,7 +276,8 @@ async def test_get_fuel_prices_for_station_client_error(client, mock_token) -> N
     with pytest.raises(NSWFuelApiClientError) as exc:
         await client.get_fuel_prices_for_station(station_code)
 
-    assert f'Invalid service station code "{station_code}"' in str(exc.value)
+    assert str(exc.value) == "HTTP error 400: Bad Request"
+    assert "Invalid service station code" not in str(exc.value)
 
 
 @pytest.mark.asyncio
@@ -332,12 +333,13 @@ async def test_get_fuel_price_timeout(client, mock_token) -> None:
 
     station_code = "21199"
     url = f"{BASE_URL}{PRICE_ENDPOINT.format(station_code=station_code)}"
-    mock_token.get(url, status=408, body="API timeout.")
+    mock_token.get(url, status=408, body="API timeout.", repeat=2)
 
-    with pytest.raises(NSWFuelApiClientError) as exc:
+    with pytest.raises(NSWFuelApiClientConnectionError) as exc:
         await client.get_fuel_prices_for_station(station_code)
 
-    assert "Connection refused" in str(exc.value)
+    assert str(exc.value) == "Request timed out after retry."
+    assert client.http_request_counts == {"oauth": 1, "data": 2, "retries": 1}
 
 
 @pytest.mark.asyncio
